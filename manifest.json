@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "轻译",
+  "version": "1.0.0",
+  "description": "轻量网页翻译 - 自动将外文翻译为中文 (Google + Bing 双引擎)",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>", "file:///*"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,17 @@
+.fanyi-trans {
+  color: #4b5563;
+  font-size: 0.9em;
+  line-height: 1.6;
+  margin: 2px 0;
+  padding: 4px 0 4px 8px;
+  border-left: 2px solid #93c5fd;
+  word-break: break-word;
+}
+
+[data-fanyi="loading"] {
+  opacity: 0.7;
+}
+
+[data-fanyi="loading"]::after {
+  content: ' ...';
+}
