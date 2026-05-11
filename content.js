@@ -40,29 +40,53 @@ function hasForeignText(text) {
   return letters.length >= 4;
 }
 
-function isDeepInline(el) {
+function isLeafBlock(el) {
   for (const child of el.children) {
-    if (!INLINE_TAGS.has(child.tagName)) return false;
-    if (!isDeepInline(child)) return false;
+    if (SKIP_TAGS.has(child.tagName)) continue;
+    if (INLINE_TAGS.has(child.tagName)) {
+      if (!isLeafBlock(child)) return false;
+      continue;
+    }
+    return false;
   }
   return true;
 }
 
-function collectLeafBlocks(root) {
+function getTranslatableText(el) {
+  let text = '';
+  function walk(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        text += child.textContent;
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        if (SKIP_TAGS.has(child.tagName)) {
+          text += ' ';
+        } else {
+          walk(child);
+        }
+      }
+    }
+  }
+  walk(el);
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function collectTranslatableBlocks(root) {
   const results = [];
+
   (function walk(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
     if (SKIP_TAGS.has(el.tagName)) return;
     if (el.classList?.contains('fanyi-trans')) return;
     if (el.dataset.fanyi) return;
 
-    if (isDeepInline(el)) {
-      const text = el.textContent.trim();
+    if (isLeafBlock(el)) {
+      const text = getTranslatableText(el);
       if (text.length >= 5 && hasForeignText(text) && !looksLikeCode(text)) {
         el.dataset.fanyi = 'pending';
         results.push(el);
+        return;
       }
-      return;
     }
 
     for (const child of el.children) walk(child);
@@ -112,7 +136,7 @@ async function translatePage(bilingual) {
   translating = true;
   currentBilingual = bilingual;
 
-  const elements = collectLeafBlocks(document.body);
+  const elements = collectTranslatableBlocks(document.body);
   if (elements.length === 0) { translating = false; return; }
 
   // Reuse observer across calls — lazy-loaded elements get added to the same one
