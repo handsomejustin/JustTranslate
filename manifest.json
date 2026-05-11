@@ -18,5 +18,11 @@
   ],
   "action": {
     "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-translate": {
+      "suggested_key": { "default": "Alt+Shift+X" },
+      "description": "切换翻译开关"
+    }
   }
 }

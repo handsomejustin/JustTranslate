@@ -81,3 +81,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ enabled: false });
 });
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'toggle-translate') {
+    chrome.storage.local.get('enabled', ({ enabled }) => {
+      const next = !enabled;
+      chrome.storage.local.set({ enabled: next });
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'toggle', enabled: next }).catch(() => {});
+        }
+      });
+    });
+  }
+});

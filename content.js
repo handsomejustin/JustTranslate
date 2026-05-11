@@ -1,7 +1,10 @@
-const BLOCK_TAGS = new Set([
-  'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'LI', 'TD', 'TH', 'DD', 'DT', 'BLOCKQUOTE', 'FIGCAPTION', 'DIV'
+const TARGET_TAGS = new Set([
+  'P', 'SPAN', 'LI', 'STRONG', 'I', 'SMALL', 'TD', 'TH', 'LABEL',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'DIV', 'A'
 ]);
+const PURE_TEXT_TAGS = new Set(['DIV']);
+const VOID_ELEMENTS = new Set(['WBR', 'BR', 'HR', 'IMG']);
 const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAREA',
   'SVG', 'MATH', 'SELECT', 'TEMPLATE', 'SLOT', 'IFRAME', 'OBJECT'
@@ -47,9 +50,9 @@ function hasForeignText(text) {
   return letters.length >= 4;
 }
 
-function findBlockParent(el) {
+function findTargetParent(el) {
   while (el && el !== document.body) {
-    if (BLOCK_TAGS.has(el.tagName)) return el;
+    if (TARGET_TAGS.has(el.tagName)) return el;
     el = el.parentElement;
   }
   return null;
@@ -71,45 +74,54 @@ function findTranslatable() {
     }
   });
   while (walker.nextNode()) {
-    const block = findBlockParent(walker.currentNode.parentElement);
-    if (block && !seen.has(block) && !block.dataset.fanyi) {
-      // Check code at BLOCK element level, not text node level
-      if (looksLikeCode(block.textContent)) {
-        block.dataset.fanyi = 'skip';
+    const target = findTargetParent(walker.currentNode.parentElement);
+    if (target && !seen.has(target) && !target.dataset.fanyi) {
+      if (looksLikeCode(target.textContent)) {
+        target.dataset.fanyi = 'skip';
         continue;
       }
-      seen.add(block);
-      block.dataset.fanyi = 'pending'; // Mark immediately to prevent rediscovery
-      results.push(block);
+      if (PURE_TEXT_TAGS.has(target.tagName)) {
+        const hasRealChildren = Array.from(target.children).some(c => !VOID_ELEMENTS.has(c.tagName));
+        if (hasRealChildren) continue;
+      }
+      seen.add(target);
+      target.dataset.fanyi = 'pending';
+      results.push(target);
     }
   }
   return results;
 }
 
 function insertTranslation(element, text, bilingual) {
+  if (!element.parentNode) { element.dataset.fanyi = 'done'; return; }
+  element.dataset.fanyiOriginal = element.innerHTML;
   if (!bilingual) {
-    // Pure Chinese: replace element's content in-place, keep tag/classes/CSS intact
-    element.dataset.fanyiOriginal = element.innerHTML;
     element.textContent = text;
   } else {
-    // Bilingual: keep original untouched, insert matching sibling below
-    const useSameTag = element.tagName === 'LI';
-    const tag = useSameTag ? 'li' : 'div';
-    const trans = document.createElement(tag);
+    let p = element.parentElement;
+    while (p && p !== document.body) {
+      if (TARGET_TAGS.has(p.tagName) && p.dataset.fanyi) {
+        element.dataset.fanyi = 'done';
+        return;
+      }
+      p = p.parentElement;
+    }
+    const isInline = ['SPAN', 'A', 'STRONG', 'I', 'SMALL', 'LABEL'].includes(element.tagName);
+    const trans = document.createElement(isInline ? 'span' : 'div');
     trans.className = 'fanyi-trans';
     trans.textContent = text;
-    if (element.tagName === 'TD' || element.tagName === 'TH') {
-      element.appendChild(trans);
-    } else {
-      element.parentNode.insertBefore(trans, element.nextSibling);
-    }
+    element.parentNode.insertBefore(trans, element.nextSibling);
   }
   element.dataset.fanyi = 'done';
 }
 
 async function translateBatch(elements, bilingual) {
+  if (!chrome.runtime?.id) { stopWatching(); return; }
   const texts = elements.map(el => el.textContent.trim());
-  const response = await chrome.runtime.sendMessage({ type: 'translate', texts, to: 'zh-CN' });
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({ type: 'translate', texts, to: 'zh-CN' });
+  } catch { stopWatching(); return; }
   if (response.error) {
     console.error('Translation error:', response.error);
     elements.forEach(el => delete el.dataset.fanyi);
