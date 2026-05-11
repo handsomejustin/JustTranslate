@@ -1,10 +1,9 @@
-const TARGET_TAGS = new Set([
-  'P', 'SPAN', 'LI', 'STRONG', 'I', 'SMALL', 'TD', 'TH', 'LABEL',
-  'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'DIV', 'A'
+const INLINE_TAGS = new Set([
+  'SPAN', 'A', 'STRONG', 'B', 'EM', 'I', 'SMALL', 'SUB', 'SUP',
+  'MARK', 'U', 'DEL', 'INS', 'S', 'ABBR', 'TIME',
+  'WBR', 'BR', 'IMG', 'BDI', 'BDO', 'DATA', 'DFN', 'KBD',
+  'SAMP', 'VAR', 'CITE', 'Q'
 ]);
-const PURE_TEXT_TAGS = new Set(['DIV']);
-const VOID_ELEMENTS = new Set(['WBR', 'BR', 'HR', 'IMG']);
 const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAREA',
   'SVG', 'MATH', 'SELECT', 'TEMPLATE', 'SLOT', 'IFRAME', 'OBJECT'
@@ -27,15 +26,6 @@ function looksLikeCode(text) {
   return hits >= 2;
 }
 
-function isInSkipTag(el) {
-  let node = el;
-  while (node && node !== document.body) {
-    if (SKIP_TAGS.has(node.tagName)) return true;
-    node = node.parentElement;
-  }
-  return false;
-}
-
 function hasForeignText(text) {
   if (!text) return false;
   const trimmed = text.trim();
@@ -50,45 +40,33 @@ function hasForeignText(text) {
   return letters.length >= 4;
 }
 
-function findTargetParent(el) {
-  while (el && el !== document.body) {
-    if (TARGET_TAGS.has(el.tagName)) return el;
-    el = el.parentElement;
+function isDeepInline(el) {
+  for (const child of el.children) {
+    if (!INLINE_TAGS.has(child.tagName)) return false;
+    if (!isDeepInline(child)) return false;
   }
-  return null;
+  return true;
 }
 
-function findTranslatable() {
+function collectLeafBlocks(root) {
   const results = [];
-  const seen = new Set();
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (isInSkipTag(parent)) return NodeFilter.FILTER_REJECT;
-      if (parent.classList.contains('fanyi-trans')) return NodeFilter.FILTER_REJECT;
-      if (parent.dataset.fanyi) return NodeFilter.FILTER_REJECT;
-      const text = node.textContent;
-      if (!text || text.trim().length < 5) return NodeFilter.FILTER_SKIP;
-      return hasForeignText(text) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
-    }
-  });
-  while (walker.nextNode()) {
-    const target = findTargetParent(walker.currentNode.parentElement);
-    if (target && !seen.has(target) && !target.dataset.fanyi) {
-      if (looksLikeCode(target.textContent)) {
-        target.dataset.fanyi = 'skip';
-        continue;
+  (function walk(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
+    if (SKIP_TAGS.has(el.tagName)) return;
+    if (el.classList?.contains('fanyi-trans')) return;
+    if (el.dataset.fanyi) return;
+
+    if (isDeepInline(el)) {
+      const text = el.textContent.trim();
+      if (text.length >= 5 && hasForeignText(text) && !looksLikeCode(text)) {
+        el.dataset.fanyi = 'pending';
+        results.push(el);
       }
-      if (PURE_TEXT_TAGS.has(target.tagName)) {
-        const hasRealChildren = Array.from(target.children).some(c => !VOID_ELEMENTS.has(c.tagName));
-        if (hasRealChildren) continue;
-      }
-      seen.add(target);
-      target.dataset.fanyi = 'pending';
-      results.push(target);
+      return;
     }
-  }
+
+    for (const child of el.children) walk(child);
+  })(root);
   return results;
 }
 
@@ -98,15 +76,7 @@ function insertTranslation(element, text, bilingual) {
   if (!bilingual) {
     element.textContent = text;
   } else {
-    let p = element.parentElement;
-    while (p && p !== document.body) {
-      if (TARGET_TAGS.has(p.tagName) && p.dataset.fanyi) {
-        element.dataset.fanyi = 'done';
-        return;
-      }
-      p = p.parentElement;
-    }
-    const isInline = ['SPAN', 'A', 'STRONG', 'I', 'SMALL', 'LABEL'].includes(element.tagName);
+    const isInline = INLINE_TAGS.has(element.tagName);
     const trans = document.createElement(isInline ? 'span' : 'div');
     trans.className = 'fanyi-trans';
     trans.textContent = text;
@@ -142,7 +112,7 @@ async function translatePage(bilingual) {
   translating = true;
   currentBilingual = bilingual;
 
-  const elements = findTranslatable();
+  const elements = collectLeafBlocks(document.body);
   if (elements.length === 0) { translating = false; return; }
 
   // Reuse observer across calls — lazy-loaded elements get added to the same one
