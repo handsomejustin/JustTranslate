@@ -30,8 +30,7 @@ function isBlockElement(el) {
   if (INLINE_TAGS.has(tag)) { blockCache.set(el, false); return false; }
   try {
     const display = getComputedStyle(el).display;
-    const result = display !== 'inline' && display !== 'inline-block'
-      && display !== 'contents' && display !== 'none';
+    const result = !display.startsWith('inline') && display !== 'contents' && display !== 'none';
     blockCache.set(el, result);
     return result;
   } catch {
@@ -69,7 +68,7 @@ function hasForeignText(text) {
 
 function containsBlockChild(el) {
   for (const child of el.children) {
-    if (SKIP_TAGS.has(child.tagName)) continue;
+    if (SKIP_TAGS.has(child.tagName.toUpperCase())) continue;
     if (isBlockElement(child)) return true;
   }
   return false;
@@ -82,7 +81,7 @@ function getTranslatableText(el) {
       if (child.nodeType === Node.TEXT_NODE) {
         text += child.textContent;
       } else if (child.nodeType === Node.ELEMENT_NODE) {
-        if (SKIP_TAGS.has(child.tagName) || child.classList?.contains('fanyi-trans')) {
+        if (SKIP_TAGS.has(child.tagName.toUpperCase()) || child.classList?.contains('fanyi-trans')) {
           text += ' ';
         } else {
           walk(child);
@@ -100,7 +99,7 @@ function replaceTextInClone(clone, translation) {
     acceptNode(node) {
       let el = node.parentElement;
       while (el && el !== clone) {
-        if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+        if (SKIP_TAGS.has(el.tagName.toUpperCase())) return NodeFilter.FILTER_REJECT;
         el = el.parentElement;
       }
       return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
@@ -110,9 +109,36 @@ function replaceTextInClone(clone, translation) {
     textNodes.push(walker.currentNode);
   }
   if (textNodes.length === 0) return;
-  textNodes[0].textContent = translation;
-  for (let i = 1; i < textNodes.length; i++) {
-    textNodes[i].textContent = '';
+
+  if (textNodes.length === 1) {
+    textNodes[0].textContent = translation;
+    return;
+  }
+
+  const n = textNodes.length;
+  const segSplitRe = /[。！？；，、.!?,;]/;
+  const segments = [];
+  let rest = translation;
+  for (let i = 0; i < n - 1 && rest; i++) {
+    const m = rest.match(segSplitRe);
+    if (m && m.index < rest.length - 1) {
+      const cut = m.index + m[0].length;
+      segments.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    } else {
+      break;
+    }
+  }
+  if (rest) segments.push(rest);
+
+  if (segments.length < n) {
+    textNodes[0].textContent = translation;
+    for (let i = 1; i < n; i++) textNodes[i].textContent = '';
+    return;
+  }
+
+  for (let i = 0; i < n; i++) {
+    textNodes[i].textContent = segments[i];
   }
 }
 
@@ -121,7 +147,7 @@ function collectTranslatableBlocks(root) {
 
   (function walk(el) {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return;
-    if (SKIP_TAGS.has(el.tagName)) return;
+    if (SKIP_TAGS.has(el.tagName.toUpperCase())) return;
     if (el.classList?.contains('fanyi-trans')) return;
     if (el.dataset.fanyi) return;
 
