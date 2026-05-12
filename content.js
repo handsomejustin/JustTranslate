@@ -4,14 +4,42 @@ const INLINE_TAGS = new Set([
   'WBR', 'BR', 'IMG', 'BDI', 'BDO', 'DATA', 'DFN', 'KBD',
   'SAMP', 'VAR', 'CITE', 'Q'
 ]);
+const BLOCK_TAGS = new Set([
+  'DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'UL', 'OL', 'LI', 'DL', 'DT', 'DD',
+  'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH',
+  'SECTION', 'ARTICLE', 'ASIDE', 'NAV', 'HEADER', 'FOOTER', 'MAIN',
+  'FIGURE', 'FIGCAPTION', 'DETAILS', 'SUMMARY',
+  'BLOCKQUOTE', 'HR', 'ADDRESS', 'FIELDSET', 'FORM'
+]);
 const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAREA',
   'SVG', 'MATH', 'SELECT', 'TEMPLATE', 'SLOT', 'IFRAME', 'OBJECT'
 ]);
+const INTERACTIVE_TAGS = new Set(['A', 'BUTTON']);
 
 let translating = false;
 let viewObserver = null;
 let currentBilingual = false;
+
+const blockCache = new WeakMap();
+
+function isBlockElement(el) {
+  if (blockCache.has(el)) return blockCache.get(el);
+  const tag = el.tagName;
+  if (BLOCK_TAGS.has(tag)) { blockCache.set(el, true); return true; }
+  if (INLINE_TAGS.has(tag)) { blockCache.set(el, false); return false; }
+  try {
+    const display = getComputedStyle(el).display;
+    const result = display !== 'inline' && display !== 'inline-block'
+      && display !== 'contents' && display !== 'none';
+    blockCache.set(el, result);
+    return result;
+  } catch {
+    blockCache.set(el, true);
+    return true;
+  }
+}
 
 function looksLikeCode(text) {
   let hits = 0;
@@ -40,16 +68,12 @@ function hasForeignText(text) {
   return letters.length >= 4;
 }
 
-function isLeafBlock(el) {
+function containsBlockChild(el) {
   for (const child of el.children) {
     if (SKIP_TAGS.has(child.tagName)) continue;
-    if (INLINE_TAGS.has(child.tagName)) {
-      if (!isLeafBlock(child)) return false;
-      continue;
-    }
-    return false;
+    if (isBlockElement(child)) return true;
   }
-  return true;
+  return false;
 }
 
 function getTranslatableText(el) {
@@ -59,7 +83,7 @@ function getTranslatableText(el) {
       if (child.nodeType === Node.TEXT_NODE) {
         text += child.textContent;
       } else if (child.nodeType === Node.ELEMENT_NODE) {
-        if (SKIP_TAGS.has(child.tagName)) {
+        if (SKIP_TAGS.has(child.tagName) || child.classList?.contains('fanyi-trans')) {
           text += ' ';
         } else {
           walk(child);
@@ -71,6 +95,28 @@ function getTranslatableText(el) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+function replaceTextInClone(clone, translation) {
+  const textNodes = [];
+  const walker = document.createTreeWalker(clone, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      let el = node.parentElement;
+      while (el && el !== clone) {
+        if (SKIP_TAGS.has(el.tagName)) return NodeFilter.FILTER_REJECT;
+        el = el.parentElement;
+      }
+      return node.textContent.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode);
+  }
+  if (textNodes.length === 0) return;
+  textNodes[0].textContent = translation;
+  for (let i = 1; i < textNodes.length; i++) {
+    textNodes[i].textContent = '';
+  }
+}
+
 function collectTranslatableBlocks(root) {
   const results = [];
 
@@ -80,7 +126,7 @@ function collectTranslatableBlocks(root) {
     if (el.classList?.contains('fanyi-trans')) return;
     if (el.dataset.fanyi) return;
 
-    if (isLeafBlock(el)) {
+    if (!containsBlockChild(el)) {
       const text = getTranslatableText(el);
       if (text.length >= 5 && hasForeignText(text) && !looksLikeCode(text)) {
         el.dataset.fanyi = 'pending';
@@ -96,22 +142,35 @@ function collectTranslatableBlocks(root) {
 
 function insertTranslation(element, text, bilingual) {
   if (!element.parentNode) { element.dataset.fanyi = 'done'; return; }
-  element.dataset.fanyiOriginal = element.innerHTML;
-  if (!bilingual) {
-    element.textContent = text;
+
+  const tag = element.tagName;
+  const isBlock = isBlockElement(element);
+  let wrapper;
+
+  if (INTERACTIVE_TAGS.has(tag)) {
+    wrapper = element.cloneNode(true);
+    replaceTextInClone(wrapper, text);
+    delete wrapper.dataset.fanyi;
+    delete wrapper.dataset.fanyiMode;
+    wrapper.classList.add('fanyi-trans', 'notranslate');
+    wrapper.setAttribute('translate', 'no');
+    wrapper.setAttribute('lang', 'zh-CN');
   } else {
-    const isInline = INLINE_TAGS.has(element.tagName);
-    const trans = document.createElement(isInline ? 'span' : 'div');
-    trans.className = 'fanyi-trans';
-    trans.textContent = text;
-    element.parentNode.insertBefore(trans, element.nextSibling);
+    wrapper = document.createElement(isBlock ? 'div' : 'span');
+    wrapper.className = 'fanyi-trans notranslate';
+    wrapper.setAttribute('translate', 'no');
+    wrapper.setAttribute('lang', 'zh-CN');
+    wrapper.textContent = text;
   }
+
+  element.parentNode.insertBefore(wrapper, element.nextSibling);
+  element.dataset.fanyiMode = bilingual ? 'dual' : 'translation';
   element.dataset.fanyi = 'done';
 }
 
 async function translateBatch(elements, bilingual) {
   if (!chrome.runtime?.id) { stopWatching(); return; }
-  const texts = elements.map(el => el.textContent.trim());
+  const texts = elements.map(el => getTranslatableText(el));
   let response;
   try {
     response = await chrome.runtime.sendMessage({ type: 'translate', texts, to: 'zh-CN' });
@@ -139,7 +198,6 @@ async function translatePage(bilingual) {
   const elements = collectTranslatableBlocks(document.body);
   if (elements.length === 0) { translating = false; return; }
 
-  // Reuse observer across calls — lazy-loaded elements get added to the same one
   if (!viewObserver) {
     viewObserver = new IntersectionObserver((entries) => {
       const visible = entries.filter(e => e.isIntersecting).map(e => e.target);
@@ -156,13 +214,9 @@ async function translatePage(bilingual) {
 }
 
 function removeTranslations() {
-  document.querySelectorAll('[data-fanyi-original]').forEach(el => {
-    el.innerHTML = el.dataset.fanyiOriginal;
-    delete el.dataset.fanyiOriginal;
-  });
   document.querySelectorAll('.fanyi-trans').forEach(el => el.remove());
+  document.querySelectorAll('[data-fanyi-mode]').forEach(el => delete el.dataset.fanyiMode);
   document.querySelectorAll('[data-fanyi]').forEach(el => delete el.dataset.fanyi);
-  // Only destroy observer on full clear, not on incremental updates
   if (viewObserver) { viewObserver.disconnect(); viewObserver = null; }
 }
 
