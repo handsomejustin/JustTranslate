@@ -1,71 +1,67 @@
-# JustTranslate
+# 轻译 JustTranslate
 
-一个极简的 Chrome 网页翻译扩展。自动将外文网页翻译为中文，不收集数据、不弹窗、不臃肿。
+极简 Chrome 网页翻译扩展。自动将外文翻译为中文，不收集数据、不弹窗、不臃肿。
 
-426 行代码，26KB。只是翻译，别无其他。
+无构建工具、无包管理器、纯 Vanilla JS。
 
 ## 功能
 
-- **自动翻译** — 开启后自动翻译当前页面的所有外文内容
-- **纯中文 / 双语对照** — 默认替换为纯中文，可切换为原文+译文双语模式
-- **双引擎** — Google Translate 为主，Bing Translator 自动降级
-- **懒加载支持** — 长页面滚动到底部也能翻译
-- **SPA 支持** — 动态加载的页面内容自动检测翻译
-- **代码识别** — 自动跳过页面中的 JavaScript 代码块，不误翻
+- **自动翻译** — 开启后翻译页面所有外文内容，保留原文内联格式（粗体、链接、斜体）
+- **纯中文 / 双语对照** — 默认替换为纯中文，可切换原文+译文双语模式
+- **双引擎降级** — Google Translate 为主，失败自动切换 Bing Translator
+- **懒加载** — IntersectionObserver 只翻译视口内元素，长页面滚动到底也能翻
+- **SPA 支持** — MutationObserver 检测动态内容，1 秒防抖后增量翻译
+- **代码识别** — 自动跳过 JavaScript 代码块，不误翻
 
 ## 安装
 
-1. 下载或 clone 本仓库
-2. 打开 Chrome，地址栏输入 `chrome://extensions/`
+1. `git clone` 本仓库
+2. Chrome 地址栏输入 `chrome://extensions/`
 3. 右上角开启 **开发者模式**
-4. 点击 **加载已解压的扩展程序**，选择本项目目录
+4. 点击 **加载已解压的扩展程序**，选择项目目录
 
 ## 使用
 
-1. 打开任意外文网页
-2. 点击工具栏中的「轻译」图标
-3. 打开翻译开关，页面自动翻译
-4. 可选开启「双语对照」查看原文
+打开任意外文网页 → 点击工具栏「轻译」图标 → 开启翻译开关。
+
+快捷键：`Alt+Shift+X` 切换翻译。
 
 ## 工作原理
 
 ```
-浏览器页面
-  └─ content.js 遍历 DOM，找到含外文的块级元素
-      └─ IntersectionObserver 懒加载，只翻译可见区域
-          └─ 发送到 background.js 调用翻译 API
-              ├─ Google Translate（主）
-              └─ Bing Translator（备用）
+页面 DOM
+  └─ content.js 遍历 DOM，找到含外文的叶子容器
+      └─ IntersectionObserver 懒加载，视口 ±300px 触发
+          └─ chrome.runtime.sendMessage → background.js
+              ├─ Google Translate（主，并发 5）
+              └─ Bing Translator（备用，并发 3，token 5 分钟刷新）
 ```
+
+### 翻译流程
+
+1. 深度遍历 DOM，找无块级子元素的"叶子容器"（段落、标题、列表项等）
+2. 提取容器内可翻译文本，跳过 `<svg>`、`<code>`、`<pre>` 等
+3. 检测是否为外文（日文/韩文/非 CJK 文字），跳过中文和代码
+4. 批量发送翻译请求（每批 10 个）
+5. 深克隆原始元素，替换克隆体文本后插入 DOM
+6. 多文本节点的容器在标点边界切分译文，保留粗体/链接等内联格式
 
 ### 翻译模式
 
 | 模式 | 行为 |
 |------|------|
-| 纯中文 | 直接替换元素文本内容，保持原标签和 CSS 布局 |
-| 双语对照 | 保留原文，在下方插入翻译文本 |
-
-### 外文检测
-
-通过 Unicode 字符范围判断文本语言：
-- 日文（平假名/片假名）→ 翻译
-- 韩文 → 翻译
-- CJK 占比超过 30% → 视为中文，跳过
-- 其他 → 翻译
-
-### 代码过滤
-
-`looksLikeCode()` 检测 8 种代码模式（`function`、`const/let/var`、DOM API、箭头函数等），命中 2 项以上跳过翻译。检测在块级元素级别执行，避免 HTML 标签拆分导致的漏检。
+| 纯中文 | 隐藏原文元素，显示翻译后的克隆体 |
+| 双语对照 | 原文和译文同时显示 |
 
 ## 文件结构
 
 ```
-├── manifest.json    # 扩展配置（Manifest V3）
-├── background.js    # 翻译 API 调用 + 双引擎切换
-├── content.js       # DOM 遍历、懒加载、翻译注入
-├── popup.html       # 弹窗界面
-├── popup.js         # 开关控制
-└── styles.css       # 双语对照样式
+manifest.json    # Manifest V3 扩展配置
+background.js    # 翻译 API 调用 + Google/Bing 双引擎
+content.js       # DOM 遍历、懒加载、翻译注入、SPA 检测
+popup.html       # 弹窗界面
+popup.js         # 开关控制逻辑
+styles.css       # 双语对照样式
 ```
 
 ## 许可证
