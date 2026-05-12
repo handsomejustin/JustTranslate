@@ -21,7 +21,7 @@
   },
   "commands": {
     "toggle-translate": {
-      "suggested_key": { "default": "Alt+Shift+X" },
+      "suggested_key": { "default": "Alt+J" },
       "description": "切换翻译开关"
     }
   }
