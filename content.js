@@ -16,7 +16,6 @@ const SKIP_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAREA',
   'SVG', 'MATH', 'SELECT', 'TEMPLATE', 'SLOT', 'IFRAME', 'OBJECT'
 ]);
-const INTERACTIVE_TAGS = new Set(['A', 'BUTTON']);
 
 let translating = false;
 let viewObserver = null;
@@ -143,25 +142,12 @@ function collectTranslatableBlocks(root) {
 function insertTranslation(element, text, bilingual) {
   if (!element.parentNode) { element.dataset.fanyi = 'done'; return; }
 
-  const tag = element.tagName;
-  const isBlock = isBlockElement(element);
-  let wrapper;
-
-  if (INTERACTIVE_TAGS.has(tag)) {
-    wrapper = element.cloneNode(true);
-    replaceTextInClone(wrapper, text);
-    delete wrapper.dataset.fanyi;
-    delete wrapper.dataset.fanyiMode;
-    wrapper.classList.add('fanyi-trans', 'notranslate');
-    wrapper.setAttribute('translate', 'no');
-    wrapper.setAttribute('lang', 'zh-CN');
-  } else {
-    wrapper = document.createElement(isBlock ? 'div' : 'span');
-    wrapper.className = 'fanyi-trans notranslate';
-    wrapper.setAttribute('translate', 'no');
-    wrapper.setAttribute('lang', 'zh-CN');
-    wrapper.textContent = text;
-  }
+  const wrapper = element.cloneNode(true);
+  replaceTextInClone(wrapper, text);
+  delete wrapper.dataset.fanyi;
+  delete wrapper.dataset.fanyiMode;
+  wrapper.classList.add('fanyi-trans', 'notranslate');
+  wrapper.setAttribute('translate', 'no');
 
   element.parentNode.insertBefore(wrapper, element.nextSibling);
   element.dataset.fanyiMode = bilingual ? 'dual' : 'translation';
